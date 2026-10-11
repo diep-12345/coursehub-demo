@@ -1,10 +1,12 @@
 from __future__ import annotations
 import logging
-from fastapi import FastAPI, HTTPException, Query, Response, status
+from fastapi import FastAPI, HTTPException, Query, Response, status, Depends
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from .database import engine
 from .schemas import EnrollmentCreate
+from pydantic import BaseModel, Field
+
 logger = logging.getLogger(__name__)
 app = FastAPI(
     title="CourseHub API",
@@ -213,3 +215,153 @@ def delete_enrollment(student_id: str, class_section_id: str) -> Response:
                 detail="Khong tim thay dang ky can huy",
             )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+
+@app.get("/lecturers")
+def get_lecturers() -> list[dict[str, object]]:
+    sql = """
+        SELECT id, name
+        FROM lecturers
+        ORDER BY id ASC
+    """
+
+    with engine.connect() as connection:
+        rows = connection.execute(text(sql)).mappings().all()
+
+    return [dict(row) for row in rows]
+
+
+@app.get("/sections/{section_id}")
+def get_section(section_id: str) -> dict[str, object]:
+    sql = """
+        SELECT
+            cs.id AS section_id,
+            c.code AS course_code,
+            c.name AS course_name,
+            s.code AS semester,
+            l.name AS lecturer,
+            cs.capacity AS capacity,
+            COALESCE(v.enrolled, 0) AS enrolled,
+            cs.capacity - COALESCE(v.enrolled, 0) AS remaining
+        FROM class_sections cs
+        JOIN courses c
+            ON cs.course_code = c.code
+        JOIN semesters s
+            ON cs.semester_code = s.code
+        JOIN lecturers l
+            ON cs.lecturer_id = l.id
+        LEFT JOIN v_section_summary v
+            ON v.class_id = cs.id
+        WHERE cs.id = :section_id
+    """
+
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(sql),
+            {"section_id": section_id}
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Section not found"
+        )
+
+    return dict(row)
+
+class CapacityUpdate(BaseModel):
+    capacity: int = Field(gt=0, strict=True)
+
+
+@app.patch("/sections/{section_id}/capacity")
+def update_section_capacity(
+    section_id: str,
+    body: CapacityUpdate
+) -> dict[str, object]:
+
+    with engine.begin() as connection:
+        # Lấy lớp học và số sinh viên đã đăng ký
+        row = connection.execute(
+            text("""
+                SELECT
+                    cs.id AS section_id,
+                    COALESCE(v.enrolled, 0) AS enrolled
+                FROM class_sections cs
+                LEFT JOIN v_section_summary v
+                    ON v.class_id = cs.id
+                WHERE cs.id = :section_id
+                FOR UPDATE OF cs
+            """),
+            {"section_id": section_id}
+        ).mappings().first()
+
+        # Không tìm thấy lớp học
+        if row is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Section not found"
+            )
+
+        enrolled = row["enrolled"]
+
+        # Sức chứa không được nhỏ hơn số sinh viên đã đăng ký
+        if body.capacity < enrolled:
+            raise HTTPException(
+                status_code=409,
+                detail="Capacity cannot be less than enrolled students"
+            )
+
+        # Cập nhật sức chứa
+        connection.execute(
+            text("""
+                UPDATE class_sections
+                SET capacity = :capacity
+                WHERE id = :section_id
+            """),
+            {
+                "capacity": body.capacity,
+                "section_id": section_id
+            }
+        )
+
+        return {
+            "section_id": section_id,
+            "capacity": body.capacity,
+            "enrolled": enrolled,
+            "remaining": body.capacity - enrolled
+        }
+
+@app.get("/courses")
+def get_courses(
+    q: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, ge=1, le=100)
+) -> list[dict[str, object]]:
+    sql = """
+        SELECT code, name
+        FROM courses
+        WHERE (
+            :q IS NULL
+            OR code ILIKE :keyword
+            OR name ILIKE :keyword
+        )
+        ORDER BY code ASC
+        OFFSET :skip
+        LIMIT :limit
+    """
+
+    keyword = f"%{q.strip()}%" if q and q.strip() else None
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(sql),
+            {
+                "q": keyword,
+                "keyword": keyword,
+                "skip": skip,
+                "limit": limit
+            }
+        ).mappings().all()
+
+    return [dict(row) for row in rows]
