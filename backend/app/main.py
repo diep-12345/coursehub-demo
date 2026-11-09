@@ -90,16 +90,39 @@ def get_course(course_code: str) -> dict[str, object]:
 @app.get("/sections")
 def list_sections(
     available_only: bool = False,
+    search: str | None = Query(default=None, max_length=50),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, ge=1, le=100),
 ) -> list[dict[str, object]]:
     sql = """
         SELECT class_id, course_code, capacity, enrolled, remaining
         FROM v_section_summary
     """
+
+    conditions = []
+    params = {
+        "skip": skip,
+        "limit": limit,
+    }
+
     if available_only:
-        sql += " WHERE remaining > 0"
-    sql += " ORDER BY class_id"
+        conditions.append("remaining > 0")
+
+    if search and search.strip():
+        conditions.append(
+            "(class_id ILIKE :search OR course_code ILIKE :search)"
+        )
+        params["search"] = f"%{search.strip()}%"
+
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
+
+    sql += " ORDER BY class_id ASC"
+    sql += " OFFSET :skip LIMIT :limit"
+
     with engine.connect() as connection:
-        rows = connection.execute(text(sql)).mappings().all()
+        rows = connection.execute(text(sql), params).mappings().all()
+
     return [dict(row) for row in rows]
 
 @app.get("/students/{student_id}/enrollments")

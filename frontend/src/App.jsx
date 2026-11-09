@@ -33,7 +33,9 @@ export default function App() {
         const [courseData, sectionData, enrollmentData] =
           await Promise.all([
             api("/courses", { signal: controller.signal }),
-            api("/sections", { signal: controller.signal }),
+            api("/sections?skip=0&limit=10", {
+              signal: controller.signal,
+            }),
             api(`/students/${encodeURIComponent(studentId)}/enrollments`, {
               signal: controller.signal,
             }),
