@@ -11,3 +11,4 @@ CREATE INDEX idx_enrollment_events_dataset_student_time
 ON enrollment_events (dataset, student_id, occurred_at DESC);
 
 ANALYZE enrollment_events;
+CREATE INDEX
