@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 from fastapi import FastAPI, HTTPException, Query, Response, status, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from .database import engine
@@ -13,6 +14,18 @@ app = FastAPI(
     version="0.4.0",
     description="API thuc hanh Buoi 3 - Co so du lieu Web va he thong thong tin",
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/")
 def read_root() -> dict[str, str]:
     return {"message": "CourseHub API dang hoat dong"}
